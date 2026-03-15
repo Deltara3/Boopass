@@ -1,0 +1,11 @@
+[package]
+name = "loader"
+version = "1.0.0"
+edition = "2024"
+
+[lib]
+name = "dinput8"
+crate-type = ["cdylib"]
+
+[dependencies]
+windows = { version = "0.62.2", features = ["Win32_Foundation", "Win32_System_LibraryLoader", "Win32_System_SystemInformation", "Win32_System_SystemServices"] }
