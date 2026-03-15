@@ -5,7 +5,7 @@ use std::mem;
 use std::ffi::c_void;
 use windows::core::{BOOL, HRESULT, GUID, PCSTR, s};
 use windows::Win32::Foundation::{HMODULE, HINSTANCE};
-use windows::Win32::System::SystemServices::{DLL_PROCESS_ATTACH, DLL_PROCESS_DETACH};
+use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 use windows::Win32::System::SystemInformation::GetSystemDirectoryA;
 use windows::Win32::System::LibraryLoader::{LoadLibraryA, GetProcAddress};
 
@@ -34,7 +34,6 @@ pub extern "system" fn DllMain(_module: HMODULE, reason: u32, _: *mut c_void) ->
             /* We can probably just yolo this for now. */
             let _ = unsafe { LoadLibraryA(s!("boopass.dll")) };
         }
-        DLL_PROCESS_DETACH => { }
         _ => { /* Yay, do nothing! */ }
     }
 
