@@ -4,10 +4,11 @@ compile_error!("compilation is only allowed on 32-bit windows");
 use std::mem;
 use std::ffi::c_void;
 use windows::core::{BOOL, HRESULT, GUID, PCSTR, s};
-use windows::Win32::Foundation::{HMODULE, HINSTANCE};
+use windows::Win32::Foundation::{HMODULE, HINSTANCE, GetLastError};
 use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 use windows::Win32::System::SystemInformation::GetSystemDirectoryA;
 use windows::Win32::System::LibraryLoader::{LoadLibraryA, GetProcAddress};
+use windows::Win32::UI::WindowsAndMessaging::{MessageBoxA, MB_OK, MB_ICONERROR, MB_ICONWARNING};
 
 type DInput8CreateFn = extern "system" fn(
     HINSTANCE,
@@ -32,7 +33,13 @@ pub extern "system" fn DllMain(_module: HMODULE, reason: u32, _: *mut c_void) ->
             }
         
             /* We can probably just yolo this for now. */
-            let _ = unsafe { LoadLibraryA(s!("boopass.dll")) };
+            match unsafe { LoadLibraryA(s!("boopass.dll")) } {
+                Ok(_) => {},
+                Err(error) => {
+                    let msg = format!("Failed to load Boopass, game will run without it.\nReason: {}", error.message());
+                    let _ = unsafe { MessageBoxA(None, PCSTR(msg.as_ptr()), s!("Uh-oh!"), MB_OK | MB_ICONWARNING) };
+                }
+            }
         }
         _ => { /* Yay, do nothing! */ }
     }
@@ -54,17 +61,24 @@ fn load_dinput() -> BOOL {
         let original_path = format!(r"{}\dinput8.dll", sys_dir);
         let raw_path = PCSTR::from_raw(original_path.as_ptr());
         
-        if let Ok(dinput) = LoadLibraryA(raw_path) {
-            ORIGINAL_DLL = Some(dinput);
-        } else {
-            return BOOL(0);
+        match LoadLibraryA(raw_path) {
+            Ok(dinput) => { ORIGINAL_DLL = Some(dinput); },
+            Err(error) => {
+                let msg = format!("Failed to load original DLL.\nReason: {}", error.message());
+                let _ = MessageBoxA(None, PCSTR(msg.as_ptr()), s!("Uh-oh!"), MB_OK | MB_ICONERROR);
+                return BOOL(0);
+            }
         }
         
-        /* We already checked if it was valid, this unwrap should be fine? */
-        if let Some(target_fn) = GetProcAddress(ORIGINAL_DLL.unwrap(), s!("DirectInput8Create")) {
-            DINPUT_CREATE = Some(mem::transmute(target_fn));
-        } else {
-            return BOOL(0);
+        /* We already checked if load was successful, this unwrap should be fine? */
+        match GetProcAddress(ORIGINAL_DLL.unwrap(), s!("DirectInput8Create")) {
+            Some(target) => { DINPUT_CREATE = Some(mem::transmute(target)); },
+            None => {
+                let error = GetLastError().to_hresult();
+                let msg = format!("Failed to get address for proxied function.\nReason: {}", error.message());
+                let _ = MessageBoxA(None, PCSTR(msg.as_ptr()), s!("Uh-oh!"), MB_OK | MB_ICONERROR);
+                return BOOL(0);
+            }
         }
     }
     
@@ -81,7 +95,7 @@ pub extern "system" fn DirectInput8Create(
     punkOuter: *mut c_void
 ) -> HRESULT {
     unsafe {
-        /* I think this unwrap is fine too. */
+        /* I think this unwrap is fine too as the DLL should exit before this is run. */
         (DINPUT_CREATE.unwrap())(hinst, dwVersion, riidltf, ppvOut, punkOuter)
     }
 }
