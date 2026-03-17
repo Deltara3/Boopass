@@ -35,7 +35,7 @@ pub extern "system" fn DllMain(_module: HMODULE, reason: u32, _: *mut c_void) ->
             match unsafe { LoadLibraryA(s!("boopass.dll")) } {
                 Ok(_) => {},
                 Err(error) => {
-                    let msg = format!("Failed to load Boopass, game will run without it.\nReason: {}", error.message());
+                    let msg = format!("Failed to load Boopass, game will run without it.\nReason: {}\0", error.message());
                     let _ = unsafe { MessageBoxA(None, PCSTR(msg.as_ptr()), s!("Uh-oh!"), MB_OK | MB_ICONWARNING) };
                 }
             }
@@ -63,7 +63,7 @@ fn load_dinput() -> BOOL {
         match LoadLibraryA(raw_path) {
             Ok(dinput) => { ORIGINAL_DLL = Some(dinput); },
             Err(error) => {
-                let msg = format!("Failed to load original DLL.\nReason: {}", error.message());
+                let msg = format!("Failed to load original DLL.\nReason: {}\0", error.message());
                 let _ = MessageBoxA(None, PCSTR(msg.as_ptr()), s!("Uh-oh!"), MB_OK | MB_ICONERROR);
                 return BOOL(0);
             }
@@ -74,7 +74,7 @@ fn load_dinput() -> BOOL {
             Some(target) => { DINPUT_CREATE = Some(mem::transmute(target)); },
             None => {
                 let error = GetLastError().to_hresult();
-                let msg = format!("Failed to get address for proxied function.\nReason: {}", error.message());
+                let msg = format!("Failed to get address for proxied function.\nReason: {}\0", error.message());
                 let _ = MessageBoxA(None, PCSTR(msg.as_ptr()), s!("Uh-oh!"), MB_OK | MB_ICONERROR);
                 return BOOL(0);
             }
