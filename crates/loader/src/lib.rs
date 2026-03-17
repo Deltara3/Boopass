@@ -32,7 +32,6 @@ pub extern "system" fn DllMain(_module: HMODULE, reason: u32, _: *mut c_void) ->
                 return dll_result;
             }
         
-            /* We can probably just yolo this for now. */
             match unsafe { LoadLibraryA(s!("boopass.dll")) } {
                 Ok(_) => {},
                 Err(error) => {
