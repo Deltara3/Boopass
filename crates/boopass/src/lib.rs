@@ -9,13 +9,9 @@ use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 #[allow(non_snake_case)]
 pub extern "system" fn DllMain(_module: HMODULE, reason: u32, _: *mut c_void) -> BOOL {
     match reason {
-        DLL_PROCESS_ATTACH => start(),
+        DLL_PROCESS_ATTACH => { },
         _ => { /* Yay, do nothing again! */ }
     };
 
     BOOL(1)
-}
-
-fn start() {
-
 }
