@@ -3,8 +3,8 @@ compile_error!("compilation is only allowed on 32-bit windows");
 
 use std::mem;
 use std::ffi::c_void;
-use windows::core::{HRESULT, GUID, PCSTR, s};
-use windows::Win32::Foundation::{BOOL, HMODULE, HINSTANCE, GetLastError};
+use windows::core::{BOOL, HRESULT, GUID, PCSTR, s};
+use windows::Win32::Foundation::{HMODULE, HINSTANCE, GetLastError};
 use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 use windows::Win32::System::SystemInformation::GetSystemDirectoryA;
 use windows::Win32::System::LibraryLoader::{LoadLibraryA, GetProcAddress};

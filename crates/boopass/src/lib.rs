@@ -2,7 +2,8 @@
 compile_error!("compilation is only allowed on 32-bit windows");
 
 use std::ffi::c_void;
-use windows::Win32::Foundation::{BOOL, HMODULE};
+use windows::core::BOOL;
+use windows::Win32::Foundation::HMODULE;
 use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 
 #[unsafe(no_mangle)]
