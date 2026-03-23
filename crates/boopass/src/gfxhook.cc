@@ -11,9 +11,7 @@ typedef HRESULT (WINAPI* CreateSwapChainFn)(IDXGIFactory*, IUnknown*, DXGI_SWAP_
 
 static CreateDXGIFactoryFn o_CreateDXGIFactory = nullptr;
 static CreateSwapChainFn o_CreateSwapChain = nullptr;
-
 PresentFn o_Present = nullptr;
-ID3D10Device* g_Device = nullptr;
 
 void ErrorBoxA(const std::string& text, UINT errorType);
 HRESULT WINAPI hk_Present(IDXGISwapChain* pSwapChain, UINT sync, UINT flags);
@@ -37,8 +35,6 @@ HRESULT WINAPI hk_CreateSwapChain(IDXGIFactory* factory, IUnknown* device, DXGI_
         if (!VirtualProtect(&vtable[8], sizeof(void*), oldProtect, &oldProtect)) {
             ErrorBoxA("Failed to disable writing for swapchain vtable.", MB_ICONWARNING);
         }
-
-        swapchain->GetDevice(__uuidof(ID3D10Device), (void**)&g_Device);
     }
 
     return hr;
