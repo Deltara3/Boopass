@@ -9,6 +9,7 @@ use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 use windows::Win32::System::SystemInformation::GetSystemDirectoryA;
 use windows::Win32::System::LibraryLoader::{LoadLibraryA, GetProcAddress};
 use windows::Win32::UI::WindowsAndMessaging::{MessageBoxA, MB_OK, MB_ICONERROR, MB_ICONWARNING};
+use windows::Win32::System::Threading::ExitProcess;
 
 type DInput8CreateFn = extern "system" fn(
     HINSTANCE,
@@ -26,11 +27,7 @@ static mut DINPUT_CREATE: Option<DInput8CreateFn> = None;
 pub extern "system" fn DllMain(_module: HMODULE, reason: u32, _: *mut c_void) -> BOOL {
     match reason {
         DLL_PROCESS_ATTACH => {
-            let dll_result = load_dinput();
-            
-            if dll_result != BOOL(1) {
-                return dll_result;
-            }
+            load_dinput();
         
             match unsafe { LoadLibraryA(s!("boopass.dll")) } {
                 Ok(_) => {},
@@ -46,13 +43,13 @@ pub extern "system" fn DllMain(_module: HMODULE, reason: u32, _: *mut c_void) ->
     BOOL(1)
 }
 
-fn load_dinput() -> BOOL {
+fn load_dinput() {
     unsafe {
         let mut path_buffer = [0u8; 260];
         let len = GetSystemDirectoryA(Some(&mut path_buffer));
         
         if len == 0 {
-            return BOOL(0);
+            ExitProcess(1);
         }
         
         /* Do I love the unwrap here? No. Does it matter? Probably not. */
@@ -65,7 +62,7 @@ fn load_dinput() -> BOOL {
             Err(error) => {
                 let msg = format!("Failed to load original DLL.\nReason: {}\0", error.message());
                 let _ = MessageBoxA(None, PCSTR(msg.as_ptr()), s!("Uh-oh!"), MB_OK | MB_ICONERROR);
-                return BOOL(0);
+                ExitProcess(1);
             }
         }
         
@@ -76,12 +73,10 @@ fn load_dinput() -> BOOL {
                 let error = GetLastError().to_hresult();
                 let msg = format!("Failed to get address for proxied function.\nReason: {}\0", error.message());
                 let _ = MessageBoxA(None, PCSTR(msg.as_ptr()), s!("Uh-oh!"), MB_OK | MB_ICONERROR);
-                return BOOL(0);
+                ExitProcess(1);
             }
         }
     }
-    
-    BOOL(1)
 }
 
 #[unsafe(no_mangle)]

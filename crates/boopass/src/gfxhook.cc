@@ -2,6 +2,7 @@
 #include <d3d10.h>
 #include <string>
 #include <sstream>
+#include "shared.h"
 
 #define PATCH_SIZE 5
 
@@ -11,10 +12,36 @@ typedef HRESULT (WINAPI* CreateSwapChainFn)(IDXGIFactory*, IUnknown*, DXGI_SWAP_
 static CreateDXGIFactoryFn o_CreateDXGIFactory = nullptr;
 static CreateSwapChainFn o_CreateSwapChain = nullptr;
 
+PresentFn o_Present = nullptr;
+ID3D10Device* g_Device = nullptr;
+
 void ErrorBoxA(const std::string& text, UINT errorType);
+HRESULT WINAPI hk_Present(IDXGISwapChain* pSwapChain, UINT sync, UINT flags);
 
 HRESULT WINAPI hk_CreateSwapChain(IDXGIFactory* factory, IUnknown* device, DXGI_SWAP_CHAIN_DESC* desc, IDXGISwapChain** ppSwapChain) {
-    return o_CreateSwapChain(factory, device, desc, ppSwapChain);
+    HRESULT hr = o_CreateSwapChain(factory, device, desc, ppSwapChain);
+
+    if (SUCCEEDED(hr) && ppSwapChain && *ppSwapChain) {
+        IDXGISwapChain* swapchain = *ppSwapChain;
+        void** vtable = *reinterpret_cast<void***>(swapchain);
+
+        DWORD oldProtect;
+
+        if (!VirtualProtect(&vtable[8], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect)) {
+            ErrorBoxA("Failed to enable writing for swapchain vtable.", MB_ICONERROR);
+        }
+
+        o_Present = (PresentFn)vtable[8];
+        vtable[8] = (void*)&hk_Present;
+
+        if (!VirtualProtect(&vtable[8], sizeof(void*), oldProtect, &oldProtect)) {
+            ErrorBoxA("Failed to disable writing for swapchain vtable.", MB_ICONWARNING);
+        }
+
+        swapchain->GetDevice(__uuidof(ID3D10Device), (void**)&g_Device);
+    }
+
+    return hr;
 }
 
 HRESULT WINAPI hk_CreateDXGIFactory(REFIID riid, void** ppFactory) {
@@ -27,43 +54,38 @@ HRESULT WINAPI hk_CreateDXGIFactory(REFIID riid, void** ppFactory) {
         DWORD oldProtect;
 
         if (!VirtualProtect(&vtable[10], sizeof(void*), PAGE_EXECUTE_READWRITE, &oldProtect)) {
-            ErrorBoxA("Failed to enable writing for vtable, continuing without Boopass.", MB_ICONWARNING);
-            goto exit;
+            ErrorBoxA("Failed to enable writing for factory vtable.", MB_ICONERROR);
         }
 
         o_CreateSwapChain = (CreateSwapChainFn)vtable[10];
         vtable[10] = (void*)&hk_CreateSwapChain;
 
         if (!VirtualProtect(&vtable[10], sizeof(void*), oldProtect, &oldProtect)) {
-            ErrorBoxA("Failed to disable writing for vtable.", MB_ICONWARNING);
+            ErrorBoxA("Failed to disable writing for factory vtable.", MB_ICONWARNING);
         }
     }
 
-    exit:
     return hr;
 }
 
-extern "C" BOOL AttachHook() {
+extern "C" void AttachHook() {
     HMODULE dxgi = GetModuleHandleA("dxgi.dll");
 
     if (dxgi == nullptr) {
-        ErrorBoxA("Failed to retrieve handle for DXGI, continuing without Boopass.", MB_ICONWARNING);
-        return FALSE;
+        ErrorBoxA("Failed to retrieve handle for DXGI.", MB_ICONERROR);
     }
 
     void* target = GetProcAddress(dxgi, "CreateDXGIFactory");
 
     /* Probably don't need to error handle here, but oh well. */
     if (target == nullptr) {
-        ErrorBoxA("Failed to get function address for CreateDXGIFactory, continuing without Boopass.", MB_ICONWARNING);
-        return FALSE;
+        ErrorBoxA("Failed to get function address for CreateDXGIFactory.", MB_ICONERROR);
     }
 
     BYTE* detour = (BYTE*)VirtualAlloc(nullptr, PATCH_SIZE + 5, MEM_COMMIT | MEM_RESERVE, PAGE_EXECUTE_READWRITE);
 
     if (detour == nullptr) {
-        ErrorBoxA("Failed to allocate memory for trampoline, continuing without Boopass.", MB_ICONWARNING);
-        return FALSE;
+        ErrorBoxA("Failed to allocate memory for trampoline.", MB_ICONERROR);
     }
 
     memcpy(detour, target, PATCH_SIZE);
@@ -77,9 +99,8 @@ extern "C" BOOL AttachHook() {
     DWORD oldProtect;
 
     if (!VirtualProtect(target, PATCH_SIZE, PAGE_EXECUTE_READWRITE, &oldProtect)) {
-        ErrorBoxA("Failed to enable writing for patch region, continuing without Boopass.", MB_ICONWARNING);
+        ErrorBoxA("Failed to enable writing for patch region.", MB_ICONERROR);
         VirtualFree(detour, 0, MEM_RELEASE);
-        return FALSE;
     }
 
     uintptr_t rel = (uintptr_t)hk_CreateDXGIFactory - (uintptr_t)target - 5;
@@ -96,8 +117,6 @@ extern "C" BOOL AttachHook() {
 
     FlushInstructionCache(GetCurrentProcess(), target, PATCH_SIZE);
     o_CreateDXGIFactory = (CreateDXGIFactoryFn)detour;
-
-    return TRUE;
 }
 
 void ErrorBoxA(const std::string& text, UINT errorType) {
@@ -123,5 +142,9 @@ void ErrorBoxA(const std::string& text, UINT errorType) {
 
     if (msg) {
         LocalFree(msg);
+    }
+
+    if (errorType == MB_ICONERROR) {
+        ExitProcess(1);
     }
 }
