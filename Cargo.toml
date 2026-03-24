@@ -1,0 +1,8 @@
+[workspace]
+resolver = "3"
+members = [
+    "crates/loader"
+]
+
+[workspace.dependencies]
+shared = { path = "crates/shared" }
