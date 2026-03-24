@@ -3,6 +3,14 @@
 version = 4
 
 [[package]]
+name = "boopass"
+version = "1.0.0"
+dependencies = [
+ "shared",
+ "windows",
+]
+
+[[package]]
 name = "loader"
 version = "1.0.0"
 dependencies = [
