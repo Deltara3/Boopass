@@ -33,14 +33,14 @@ pub fn load() {
 
     unsafe {
         let module = LoadLibraryA(c_path)
-            .unwrap_or_die("Failed to load original DLL.");
+            .unwrap_or_die("Failed to load original DLL, exiting.");
         
         ORIGINAL_DLL = Some(module);
     };
 
     unsafe {
         let method = GetProcAddress(ORIGINAL_DLL.unwrap(), s!("DirectInput8Create"))
-            .unwrap_or_die("Failed to load proxied function.");
+            .unwrap_or_die("Failed to load proxied function, exiting.");
 
         DINPUT_CREATE = Some(std::mem::transmute(method));
     }
