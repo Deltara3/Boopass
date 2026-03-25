@@ -11,7 +11,7 @@ use windows::Win32::{
     System::Memory::{VirtualAlloc, VirtualProtect, PAGE_EXECUTE_READWRITE, MEM_COMMIT, MEM_RESERVE, PAGE_PROTECTION_FLAGS}
 };
 
-type CreateDXGIFactoryFn = unsafe extern "C" fn(*const GUID, *mut *mut c_void) -> HRESULT;
+type CreateDXGIFactoryFn = unsafe extern "system" fn(*const GUID, *mut *mut c_void) -> HRESULT;
 
 const PATCH_SIZE: usize = 5;
 static mut CREATE_DXGI_FACTORY: Option<CreateDXGIFactoryFn> = None;
@@ -69,7 +69,7 @@ pub fn install() {
 
     unsafe { ptr::copy_nonoverlapping(target as *const u8, detour, PATCH_SIZE) };
 
-    let return_addr = target as *const c_void;
+    let return_addr = unsafe { (target as *const c_void).add(PATCH_SIZE) };
     let relative_back = return_addr as isize - unsafe { detour.add(PATCH_SIZE) } as isize - 5;
 
     unsafe {
@@ -100,6 +100,5 @@ pub fn install() {
 
 #[allow(non_snake_case)]
 unsafe extern "system" fn hk_CreateDXGIFactory(riid: *const GUID, factory: *mut *mut c_void) -> HRESULT {
-    // This is broken right now.
     unsafe { (CREATE_DXGI_FACTORY.unwrap())(riid, factory) }
 }
