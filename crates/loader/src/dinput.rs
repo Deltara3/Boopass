@@ -40,11 +40,11 @@ pub fn load() {
         log::info!("Loader", "Loaded original DLL with handle 0x{:08X}.", module.0 as usize);
 
         let method = GetProcAddress(ORIGINAL_DLL.unwrap(), s!("DirectInput8Create")).unwrap_or_die(|error| {
-            log::fatal!("Loader", "Loading original function failed with code {}, aborting.", error.code());
+            log::fatal!("Loader", "Retrieving original function failed with code {}, aborting.", error.code());
         });
 
         DINPUT_CREATE = Some(std::mem::transmute(method));
-        log::info!("Loader", "Loaded original function from address 0x{:08X}.", method as usize);
+        log::info!("Loader", "Retrieved original function from address 0x{:08X}.", method as usize);
     }
 }
 
