@@ -4,17 +4,29 @@
 use std::{ptr, mem};
 use std::ffi::c_void;
 use shared::{Win32Unwrap, log};
-use windows::Win32::System::Threading::ExitProcess;
-use windows::core::{GUID, HRESULT, s};
+use windows::core::{s, GUID, HRESULT, IUnknown};
 use windows::Win32::{
     System::LibraryLoader::{GetModuleHandleA, GetProcAddress},
-    System::Memory::{VirtualAlloc, VirtualProtect, PAGE_EXECUTE_READWRITE, MEM_COMMIT, MEM_RESERVE, PAGE_PROTECTION_FLAGS}
+    System::Memory::{VirtualAlloc, VirtualProtect, PAGE_EXECUTE_READWRITE, MEM_COMMIT, MEM_RESERVE, PAGE_PROTECTION_FLAGS},
+    System::Threading::ExitProcess,
+    Graphics::Dxgi::{IDXGIFactory, IDXGISwapChain, DXGI_SWAP_CHAIN_DESC}
 };
 
-type CreateDXGIFactoryFn = unsafe extern "system" fn(*const GUID, *mut *mut c_void) -> HRESULT;
+type CreateDXGIFactoryFn = unsafe extern "system" fn(
+    *const GUID,
+    *mut *mut c_void
+) -> HRESULT;
+
+type CreateSwapChainFn = unsafe extern "system" fn(
+    *mut IDXGIFactory,
+    *mut IUnknown,
+    *mut DXGI_SWAP_CHAIN_DESC,
+    *mut *mut IDXGISwapChain
+) -> HRESULT;
 
 const PATCH_SIZE: usize = 5;
 static mut CREATE_DXGI_FACTORY: Option<CreateDXGIFactoryFn> = None;
+static mut CREATE_SWAP_CHAIN: Option<CreateSwapChainFn> = None;
 
 macro_rules! write_lock {
     ($section: literal, $addr: expr, $size: expr, $body: block) => {
@@ -99,6 +111,46 @@ pub fn install() {
 }
 
 #[allow(non_snake_case)]
-unsafe extern "system" fn hk_CreateDXGIFactory(riid: *const GUID, factory: *mut *mut c_void) -> HRESULT {
-    unsafe { (CREATE_DXGI_FACTORY.unwrap())(riid, factory) }
+unsafe extern "system" fn hk_CreateDXGIFactory(
+    riid: *const GUID, 
+    factory: *mut *mut c_void
+) -> HRESULT {
+    // This is checked way before the hook gets called, unwrap should be fine.
+    let hr = unsafe { (CREATE_DXGI_FACTORY.unwrap())(riid, factory) };
+
+    if hr.is_ok() && !factory.is_null() && !unsafe { (*factory).is_null() } {
+        let vtable = unsafe { *(*factory as *mut *mut *mut c_void) };
+        let entry = unsafe { vtable.add(10) };
+
+        log::info!("Core", "Found CreateSwapChain at entry address 0x{:08X}.", entry as usize);
+
+        write_lock!("CreateSwapChain", entry as *const c_void, mem::size_of::<*mut c_void>(), {
+            unsafe {
+                let old_addr = *entry;
+                let hook_addr = hk_CreateSwapChain as *mut c_void;
+
+                CREATE_SWAP_CHAIN = Some(mem::transmute(old_addr));
+                *entry = hook_addr;
+
+                log::info!("Core", "Wrote hook address 0x{:08X} to 0x{:08X}", hook_addr as usize, old_addr as usize);
+            }
+        });
+    } else {
+        log::fatal!("Core", "CreateDXGIFactory failed with code 0x{:08X}.", hr.0);
+    }
+
+    return hr;
+}
+
+#[allow(non_snake_case)]
+unsafe extern "system" fn hk_CreateSwapChain(
+    factory: *mut IDXGIFactory,
+    device: *mut IUnknown,
+    desc: *mut DXGI_SWAP_CHAIN_DESC,
+    swapchain: *mut *mut IDXGISwapChain
+) -> HRESULT {
+    unsafe {
+        // Ditto of above, unwrap should be fine.
+        (CREATE_SWAP_CHAIN.unwrap())(factory, device, desc, swapchain)
+    }
 }

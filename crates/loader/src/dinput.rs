@@ -59,12 +59,6 @@ pub extern "system" fn DirectInput8Create(
 ) -> HRESULT {
     unsafe {
         // We crash if the function or module doesn't exist, should be fine.
-        (DINPUT_CREATE.unwrap())(
-            hinst,
-            dwVersion,
-            riidltf,
-            ppvOut,
-            punkOuter
-        )
+        (DINPUT_CREATE.unwrap())(hinst, dwVersion, riidltf, ppvOut, punkOuter)
     }
 }
