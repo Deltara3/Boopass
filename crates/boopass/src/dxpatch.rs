@@ -4,7 +4,7 @@
 use std::{ptr, mem};
 use std::ffi::c_void;
 use std::cell::OnceCell;
-use shared::{Win32Unwrap, log, cell, display_error_box};
+use shared::{Win32Unwrap, log, cell, display_error_box, hookdef};
 use windows::core::{GUID, HRESULT, IUnknown, Interface, s};
 use windows::Win32::{
     Foundation::{HWND, WPARAM, LPARAM, LRESULT},
@@ -18,31 +18,6 @@ use windows::Win32::{
 const PATCH_SIZE: usize = 5;
 
 thread_local! {
-    static CREATE_DXGI_FACTORY: OnceCell<unsafe extern "system" fn(
-        *const GUID,
-        *mut *mut c_void
-    ) -> HRESULT> = OnceCell::new();
-
-    static CREATE_SWAP_CHAIN: OnceCell<unsafe extern "system" fn(
-        *mut IDXGIFactory,
-        *mut IUnknown,
-        *mut DXGI_SWAP_CHAIN_DESC,
-        *mut *mut IDXGISwapChain
-    ) -> HRESULT> = OnceCell::new();
-
-    static PRESENT: OnceCell<unsafe extern "system" fn(
-        *mut IDXGISwapChain,
-        u32,
-        u32
-    ) -> HRESULT> = OnceCell::new();
-
-    static WNDPROC: OnceCell<unsafe extern "system" fn(
-        HWND,
-        u32,
-        WPARAM,
-        LPARAM
-    ) -> LRESULT> = OnceCell::new();
-
     static DEVICE: OnceCell<ID3D10Device> = OnceCell::new();
     static RENDER_TARGET: OnceCell<ID3D10RenderTargetView> = OnceCell::new();
 }
@@ -134,142 +109,146 @@ pub fn install() {
     }
 }
 
-#[allow(non_snake_case)]
-unsafe extern "system" fn hk_CreateDXGIFactory(
+hookdef! {
+    CREATE_DXGI_FACTORY hk_CreateDXGIFactory(
     riid: *const GUID, 
     factory: *mut *mut c_void
 ) -> HRESULT {
-    unsafe {
-        // This is checked way before the hook gets called, unwrap should be fine.
-        let hr = cell::call!(CREATE_DXGI_FACTORY, riid, factory);
+        unsafe {
+            // This is checked way before the hook gets called, unwrap should be fine.
+            let hr = cell::call!(CREATE_DXGI_FACTORY, riid, factory);
 
-        if hr.is_ok() && !factory.is_null() && !(*factory).is_null() {
-            let vtable = *(*factory as *mut *mut *mut c_void);
-            let entry = vtable.add(10);
+            if hr.is_ok() && !factory.is_null() && !(*factory).is_null() {
+                let vtable = *(*factory as *mut *mut *mut c_void);
+                let entry = vtable.add(10);
 
-            log::info!("Core", "Found CreateSwapChain at entry address 0x{:08X}.", entry as usize);
+                log::info!("Core", "Found CreateSwapChain at entry address 0x{:08X}.", entry as usize);
 
-            write_lock!("CreateSwapChain", entry as *const c_void, mem::size_of::<*mut c_void>(), {
-                let old_addr = *entry;
-                let hook_addr = hk_CreateSwapChain as *mut c_void;
+                write_lock!("CreateSwapChain", entry as *const c_void, mem::size_of::<*mut c_void>(), {
+                    let old_addr = *entry;
+                    let hook_addr = hk_CreateSwapChain as *mut c_void;
 
-                cell::init!(CREATE_SWAP_CHAIN, mem::transmute(old_addr));
-                *entry = hook_addr;
+                    cell::init!(CREATE_SWAP_CHAIN, mem::transmute(old_addr));
+                    *entry = hook_addr;
 
-                log::info!("Core", "Wrote CreateSwapChain hook address 0x{:08X} to 0x{:08X}.", hook_addr as usize, old_addr as usize);
-            });
-        } else {
-            match hr.is_err() {
-                true => log::fatal!("Core", "CreateDXGIFactory failed with code 0x{:08X}.", hr.0),
-                false => log::fatal!("Core", "Factory recieved in CreateDXGIFactory was null.")
+                    log::info!("Core", "Wrote CreateSwapChain hook address 0x{:08X} to 0x{:08X}.", hook_addr as usize, old_addr as usize);
+                });
+            } else {
+                match hr.is_err() {
+                    true => log::fatal!("Core", "CreateDXGIFactory failed with code 0x{:08X}.", hr.0),
+                    false => log::fatal!("Core", "Factory recieved in CreateDXGIFactory was null.")
+                }
+
+                display_error_box();
             }
 
-            display_error_box();
+            hr
         }
-
-        hr
     }
 }
 
-#[allow(non_snake_case)]
-unsafe extern "system" fn hk_CreateSwapChain(
-    factory: *mut IDXGIFactory,
-    device: *mut IUnknown,
-    desc: *mut DXGI_SWAP_CHAIN_DESC,
-    swapchain: *mut *mut IDXGISwapChain
-) -> HRESULT {
-    unsafe {
-        // Ditto of above, unwrap should be fine.
-        let hr = cell::call!(CREATE_SWAP_CHAIN, factory, device, desc, swapchain);
+hookdef! {
+    CREATE_SWAP_CHAIN hk_CreateSwapChain(
+        factory: *mut IDXGIFactory,
+        device: *mut IUnknown,
+        desc: *mut DXGI_SWAP_CHAIN_DESC,
+        swapchain: *mut *mut IDXGISwapChain
+    ) -> HRESULT {
+        unsafe {
+            // Ditto of above, unwrap should be fine.
+            let hr = cell::call!(CREATE_SWAP_CHAIN, factory, device, desc, swapchain);
 
-        if hr.is_ok() && !swapchain.is_null() && !(*swapchain).is_null() {
-            let vtable = *(*swapchain as *mut *mut *mut c_void);
-            let entry = vtable.add(8);
+            if hr.is_ok() && !swapchain.is_null() && !(*swapchain).is_null() {
+                let vtable = *(*swapchain as *mut *mut *mut c_void);
+                let entry = vtable.add(8);
 
-            log::info!("Core", "Found Present at entry address 0x{:08X}.", entry as usize);
+                log::info!("Core", "Found Present at entry address 0x{:08X}.", entry as usize);
 
-            write_lock!("Present", entry as *const c_void, mem::size_of::<*mut c_void>(), {
-                let old_addr = *entry;
-                let hook_addr = hk_Present as *mut c_void;
+                write_lock!("Present", entry as *const c_void, mem::size_of::<*mut c_void>(), {
+                    let old_addr = *entry;
+                    let hook_addr = hk_Present as *mut c_void;
 
-                cell::init!(PRESENT, mem::transmute(old_addr));
-                *entry = hook_addr;
+                    cell::init!(PRESENT, mem::transmute(old_addr));
+                    *entry = hook_addr;
 
-                log::info!("Core", "Wrote Present hook address 0x{:08X} to 0x{:08X}.", hook_addr as usize, old_addr as usize);
-            });
-        } else {
-            match hr.is_err() {
-                true => log::fatal!("Core", "CreateSwapChain failed with code 0x{:08X}.", hr.0),
-                false => log::fatal!("Core", "Swapchain recieved in CreateSwapChain was null.")
+                    log::info!("Core", "Wrote Present hook address 0x{:08X} to 0x{:08X}.", hook_addr as usize, old_addr as usize);
+                });
+            } else {
+                match hr.is_err() {
+                    true => log::fatal!("Core", "CreateSwapChain failed with code 0x{:08X}.", hr.0),
+                    false => log::fatal!("Core", "Swapchain recieved in CreateSwapChain was null.")
+                }
+
+                display_error_box();
             }
 
-            display_error_box();
+            hr
         }
-
-        hr
     }
 }
 
-#[allow(non_snake_case)]
-unsafe extern "system" fn hk_Present(
-    swapchain: *mut IDXGISwapChain,
-    sync: u32,
-    flags: u32
-) -> HRESULT {
-    unsafe {
-        // Most of this shouldn't fail, I think.
-        if !INITIALIZED && !swapchain.is_null() {
-            let swapchain_addr = swapchain as *mut c_void;
-            let swap = IDXGISwapChain::from_raw_borrowed(&swapchain_addr).unwrap();
+hookdef! {
+    PRESENT hk_Present(
+        swapchain: *mut IDXGISwapChain,
+        sync: u32,
+        flags: u32
+    ) -> HRESULT {
+        unsafe {
+            // Most of this shouldn't fail, I think.
+            if !INITIALIZED && !swapchain.is_null() {
+                let swapchain_addr = swapchain as *mut c_void;
+                let swap = IDXGISwapChain::from_raw_borrowed(&swapchain_addr).unwrap();
 
-            cell::init!(DEVICE, swap.GetDevice::<ID3D10Device>().unwrap());
-            let mut target_view: Option<ID3D10RenderTargetView> = None;
-            let desc = swap.GetDesc().unwrap();
+                cell::init!(DEVICE, swap.GetDevice::<ID3D10Device>().unwrap());
+                let mut target_view: Option<ID3D10RenderTargetView> = None;
+                let desc = swap.GetDesc().unwrap();
 
-            cell::util!(DEVICE, device, {
-                log::info!("Core", "Found ID3D10Device at address 0x{:08X}.", device.as_raw() as usize);
+                cell::util!(DEVICE, device, {
+                    log::info!("Core", "Found ID3D10Device at address 0x{:08X}.", device.as_raw() as usize);
 
-                let back_buffer = swap.GetBuffer::<ID3D10Texture2D>(0);
-                device.CreateRenderTargetView(back_buffer.as_ref().unwrap(), None, Some(&mut target_view)).unwrap_or_die(|error| {
-                    log::fatal!("Core", "Creating ID3D10RenderTargetView failed with code {}, aborting.", error.code());
+                    let back_buffer = swap.GetBuffer::<ID3D10Texture2D>(0);
+                    device.CreateRenderTargetView(back_buffer.as_ref().unwrap(), None, Some(&mut target_view)).unwrap_or_die(|error| {
+                        log::fatal!("Core", "Creating ID3D10RenderTargetView failed with code {}, aborting.", error.code());
+                    });
+
+                    cell::init!(RENDER_TARGET, target_view.unwrap());
+                    cell::util!(RENDER_TARGET, render_target, {
+                        log::info!("Core", "Created ID3D10RenderTargetView at address 0x{:08X}.", render_target.as_raw() as usize);
+
+                        ImGui_Init(desc.OutputWindow, device.as_raw(), render_target.as_raw());
+                    });
                 });
 
-                cell::init!(RENDER_TARGET, target_view.unwrap());
-                cell::util!(RENDER_TARGET, render_target, {
-                    log::info!("Core", "Created ID3D10RenderTargetView at address 0x{:08X}.", render_target.as_raw() as usize);
+                log::info!("Core", "Initialized ImGui successfully.");
 
-                    ImGui_Init(desc.OutputWindow, device.as_raw(), render_target.as_raw());
-                });
-            });
+                INITIALIZED = true;
+            }
 
-            log::info!("Core", "Initialized ImGui successfully.");
+            if !INITIALIZED {
+                return cell::call!(PRESENT, swapchain, sync, flags);
+            }
 
-            INITIALIZED = true;
+            if MENU_SHOWN {
+                while ShowCursor(true) < 0 {}
+                ImGui_Draw();
+            } else {
+                while ShowCursor(false) >= 0 {}
+            }
+        
+            cell::call!(PRESENT, swapchain, sync, flags)
         }
-
-        if !INITIALIZED {
-            return cell::call!(PRESENT, swapchain, sync, flags);
-        }
-
-        if MENU_SHOWN {
-            while ShowCursor(true) < 0 {}
-            ImGui_Draw();
-        } else {
-            while ShowCursor(false) >= 0 {}
-        }
-    
-        cell::call!(PRESENT, swapchain, sync, flags)
     }
 }
 
-#[allow(non_snake_case)]
-unsafe extern "system" fn hk_WndProc(
-    hwnd: HWND,
-    msg: u32,
-    wParam: WPARAM,
-    lParam: LPARAM
-) -> LRESULT {
-    unsafe {
-        cell::call!(WNDPROC, hwnd, msg, wParam, lParam)
+hookdef! {
+    WNDPROC hk_WndProc(
+        hwnd: HWND,
+        msg: u32,
+        wParam: WPARAM,
+        lParam: LPARAM
+    ) -> LRESULT {
+        unsafe {
+            cell::call!(WNDPROC, hwnd, msg, wParam, lParam)
+        }
     }
 }

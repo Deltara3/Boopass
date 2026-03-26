@@ -4,7 +4,7 @@
 use std::mem;
 use std::ffi::c_void;
 use std::cell::OnceCell;
-use shared::{Win32Unwrap, log, cell};
+use shared::{Win32Unwrap, log, cell, hookdef};
 use windows::core::{s, GUID, HRESULT, PCSTR};
 use windows::Win32::{
     Foundation::{HINSTANCE, HMODULE, MAX_PATH},
@@ -14,13 +14,6 @@ use windows::Win32::{
 
 thread_local! {
     static ORIGINAL_DLL: OnceCell<HMODULE> = OnceCell::new();
-    static DINPUT_CREATE: OnceCell<unsafe extern "system" fn(
-        HINSTANCE,
-        u32,
-        *const GUID,
-        *mut *mut c_void,
-        *mut c_void
-    ) -> HRESULT> = OnceCell::new();
 }
 
 pub fn load() {
@@ -53,17 +46,17 @@ pub fn load() {
     }
 }
 
-#[unsafe(no_mangle)]
-#[allow(non_snake_case)]
-pub unsafe extern "system" fn DirectInput8Create(
-    hinst: HINSTANCE,
-    dwVersion: u32,
-    riidltf: *const GUID,
-    ppvOut: *mut *mut c_void,
-    punkOuter: *mut c_void
-) -> HRESULT {
-    unsafe {
-        // We crash if the function or module doesn't exist, should be fine.
-        cell::call!(DINPUT_CREATE, hinst, dwVersion, riidltf, ppvOut, punkOuter)
+hookdef! {
+    DINPUT_CREATE DirectInput8Create(
+        hinst: HINSTANCE,
+        dwVersion: u32,
+        riidltf: *const GUID,
+        ppvOut: *mut *mut c_void,
+        punkOuter: *mut c_void
+    ) -> HRESULT {
+        unsafe {
+            // We crash if the function or module doesn't exist, should be fine.
+            cell::call!(DINPUT_CREATE, hinst, dwVersion, riidltf, ppvOut, punkOuter)
+        }
     }
 }
