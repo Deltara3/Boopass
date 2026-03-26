@@ -34,6 +34,9 @@ static mut CREATE_DXGI_FACTORY: Option<CreateDXGIFactoryFn> = None;
 static mut CREATE_SWAP_CHAIN: Option<CreateSwapChainFn> = None;
 static mut PRESENT: Option<PresentFn> = None;
 
+static mut INITIALIZED: bool = false;
+static mut MENU_SHOWN: bool = true;
+
 macro_rules! write_lock {
     ($section: literal, $addr: expr, $size: expr, $body: block) => {
         let mut old_protect = PAGE_PROTECTION_FLAGS(0);

@@ -42,6 +42,6 @@ pub fn display_error_box() -> ! {
             MB_OK | MB_ICONERROR | MB_TOPMOST
         );
 
-        ExitProcess(1);
+        ExitProcess(1)
     }
 }

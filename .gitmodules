@@ -1,0 +1,3 @@
+[submodule "crates/boopass/src/imgui"]
+	path = crates/boopass/src/imgui
+	url = https://github.com/ocornut/imgui
