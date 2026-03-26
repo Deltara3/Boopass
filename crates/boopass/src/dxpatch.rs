@@ -17,8 +17,10 @@ const PATCH_SIZE: usize = 5;
 static mut CREATE_DXGI_FACTORY: Option<CreateDXGIFactoryFn> = None;
 
 macro_rules! write_lock {
-    ($section: literal, $addr: expr, $size: expr, $old: expr, $body: block) => {
-        unsafe { VirtualProtect($addr, $size, PAGE_EXECUTE_READWRITE, $old) }.unwrap_or_die(|error| {
+    ($section: literal, $addr: expr, $size: expr, $body: block) => {
+        let mut old_protect = PAGE_PROTECTION_FLAGS(0);
+
+        unsafe { VirtualProtect($addr, $size, PAGE_EXECUTE_READWRITE, &mut old_protect) }.unwrap_or_die(|error| {
             log::fatal!("Core", 
                 "Enabling writing for the {} patch failed with code {}, aborting.",
                 $section,
@@ -28,7 +30,7 @@ macro_rules! write_lock {
 
         $body
 
-        if let Err(error) = unsafe { VirtualProtect($addr, $size, *$old, $old) } {
+        if let Err(error) = unsafe { VirtualProtect($addr, $size, old_protect, &mut old_protect) } {
             log::warn!("Core", 
                 "Disabling writing for the {} patch failed with code {}.",
                 $section,
@@ -79,9 +81,7 @@ pub fn install() {
 
     log::info!("Core", "Wrote trampoline for address 0x{:08X}.", return_addr as usize + PATCH_SIZE);
 
-    let mut old_protect = PAGE_PROTECTION_FLAGS(0);
-
-    write_lock!("CreateDXGIFactory", target as *const c_void, PATCH_SIZE, &mut old_protect, {
+    write_lock!("CreateDXGIFactory", target as *const c_void, PATCH_SIZE, {
         let hook_addr = hk_CreateDXGIFactory as *const c_void;
         let relative_to = hook_addr as isize - target as isize - 5;
 
