@@ -50,7 +50,7 @@ pub fn load() {
 
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
-pub extern "system" fn DirectInput8Create(
+pub unsafe extern "system" fn DirectInput8Create(
     hinst: HINSTANCE,
     dwVersion: u32,
     riidltf: *const GUID,
