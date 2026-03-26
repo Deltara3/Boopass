@@ -32,7 +32,7 @@ pub fn load() {
         });
         
         cell::init!(ORIGINAL_DLL, module);
-        cell::util!(ORIGINAL_DLL, dll, {
+        cell::util!(ORIGINAL_DLL, |dll| {
             log::info!("Loader", "Loaded original DLL with handle 0x{:08X}.", module.0 as usize);
 
             let method = GetProcAddress(*dll, s!("DirectInput8Create")).unwrap_or_die(|error| {

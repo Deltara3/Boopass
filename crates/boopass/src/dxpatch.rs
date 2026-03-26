@@ -210,7 +210,7 @@ hookdef! {
                 cell::init!(WNDPROC, mem::transmute(old_wndproc as *const c_void));
                 log::info!("Core", "Updated window procedure from address 0x{:08X} to 0x{:08X}.", old_wndproc, new_wndproc);
 
-                cell::util!(DEVICE, device, {
+                cell::util!(DEVICE, |device| {
                     log::info!("Core", "Found ID3D10Device at address 0x{:08X}.", device.as_raw() as usize);
 
                     let back_buffer = swap.GetBuffer::<ID3D10Texture2D>(0);
@@ -219,7 +219,7 @@ hookdef! {
                     });
 
                     cell::init!(RENDER_TARGET, target_view.unwrap());
-                    cell::util!(RENDER_TARGET, render_target, {
+                    cell::util!(RENDER_TARGET, |render_target| {
                         log::info!("Core", "Created ID3D10RenderTargetView at address 0x{:08X}.", render_target.as_raw() as usize);
 
                         ImGui_Init(desc.OutputWindow, device.as_raw(), render_target.as_raw());

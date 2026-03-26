@@ -7,7 +7,7 @@ macro_rules! init {
 
 #[macro_export]
 macro_rules! util {
-    ($global:ident, $value:ident, $body:block) => {
+    ($global:ident, |$value:ident| $body:block) => {
         $global.with(|inner| {
             let $value = inner.get().unwrap();
             $body
