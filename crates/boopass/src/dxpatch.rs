@@ -38,7 +38,7 @@ macro_rules! write_lock {
     ($section: literal, $addr: expr, $size: expr, $body: block) => {
         let mut old_protect = PAGE_PROTECTION_FLAGS(0);
 
-        unsafe { VirtualProtect($addr, $size, PAGE_EXECUTE_READWRITE, &mut old_protect) }.unwrap_or_die(|error| {
+        VirtualProtect($addr, $size, PAGE_EXECUTE_READWRITE, &mut old_protect).unwrap_or_die(|error| {
             log::fatal!("Core", 
                 "Enabling writing for the {} patch failed with code {}, aborting.",
                 $section,
@@ -48,7 +48,7 @@ macro_rules! write_lock {
 
         $body
 
-        if let Err(error) = unsafe { VirtualProtect($addr, $size, old_protect, &mut old_protect) } {
+        if let Err(error) = VirtualProtect($addr, $size, old_protect, &mut old_protect) {
             log::warn!("Core", 
                 "Disabling writing for the {} patch failed with code {}.",
                 $section,
@@ -59,61 +59,57 @@ macro_rules! write_lock {
 }
 
 pub fn install() {
-    let dxgi = unsafe { GetModuleHandleA(s!("dxgi.dll")) }.unwrap_or_die(|error| {
-        log::fatal!("Core", "Retrieving handle for DXGI failed with code {}, aborting.", error.code());
-    });
+    unsafe {
+        let dxgi = GetModuleHandleA(s!("dxgi.dll")).unwrap_or_die(|error| {
+            log::fatal!("Core", "Retrieving handle for DXGI failed with code {}, aborting.", error.code());
+        });
 
-    log::info!("Core", "Retrieved DXGI with handle 0x{:08X}.", dxgi.0 as usize);
+        log::info!("Core", "Retrieved DXGI with handle 0x{:08X}.", dxgi.0 as usize);
 
-    let target = unsafe { GetProcAddress(dxgi, s!("CreateDXGIFactory")) }.unwrap_or_die(|error| {
-        log::fatal!("Core", "Locating CreateDXGIFactory failed with code {}, aborting.", error.code());
-    });
+        let target = GetProcAddress(dxgi, s!("CreateDXGIFactory")).unwrap_or_die(|error| {
+            log::fatal!("Core", "Locating CreateDXGIFactory failed with code {}, aborting.", error.code());
+        });
 
-    log::info!("Core", "Found CreateDXGIFactory at address 0x{:08X}.", target as usize);
+        log::info!("Core", "Found CreateDXGIFactory at address 0x{:08X}.", target as usize);
 
-    let detour = unsafe {
-        VirtualAlloc(
+        let detour = VirtualAlloc(
             None,
             PATCH_SIZE + 5,
             MEM_COMMIT | MEM_RESERVE,
             PAGE_EXECUTE_READWRITE
-        )
-    } as *mut u8;
+        ) as *mut u8;
 
-    if detour.is_null() {
-        log::fatal!("Core", "Failed to allocate memory for trampoline, aborting.");
-        display_error_box();
-    }
+        if detour.is_null() {
+            log::fatal!("Core", "Failed to allocate memory for trampoline, aborting.");
+            display_error_box();
+        }
 
-    log::info!("Core", "Allocated memory for trampoline at address 0x{:08X}.", detour as usize);
+        log::info!("Core", "Allocated memory for trampoline at address 0x{:08X}.", detour as usize);
 
-    unsafe { ptr::copy_nonoverlapping(target as *const u8, detour, PATCH_SIZE) };
+        ptr::copy_nonoverlapping(target as *const u8, detour, PATCH_SIZE);
 
-    let return_addr = unsafe { (target as *const c_void).add(PATCH_SIZE) };
-    let relative_back = return_addr as isize - unsafe { detour.add(PATCH_SIZE) } as isize - 5;
+        let return_addr = (target as *const c_void).add(PATCH_SIZE);
+        let relative_back = return_addr as isize - detour.add(PATCH_SIZE) as isize - 5;
 
-    unsafe {
         *detour.add(PATCH_SIZE) = 0xE9;
         ptr::write_unaligned(detour.add(PATCH_SIZE + 1) as *mut u32, relative_back as u32);
-    }
 
-    log::info!("Core", "Wrote trampoline for address 0x{:08X}.", return_addr as usize + PATCH_SIZE);
+        log::info!("Core", "Wrote trampoline for address 0x{:08X}.", return_addr as usize + PATCH_SIZE);
 
-    write_lock!("CreateDXGIFactory", target as *const c_void, PATCH_SIZE, {
-        let hook_addr = hk_CreateDXGIFactory as *const c_void;
-        let relative_to = hook_addr as isize - target as isize - 5;
+        write_lock!("CreateDXGIFactory", target as *const c_void, PATCH_SIZE, {
+            let hook_addr = hk_CreateDXGIFactory as *const c_void;
+            let relative_to = hook_addr as isize - target as isize - 5;
 
-        unsafe {
             let mut patch = [0u8; PATCH_SIZE];
             patch[0] = 0xE9;
             ptr::write_unaligned(patch.as_mut_ptr().add(1) as *mut u32, relative_to as u32);
 
             ptr::copy_nonoverlapping(patch.as_ptr(), target as *mut u8, PATCH_SIZE);
             log::info!("Core", "Wrote jump to 0x{:08X} at 0x{:08X}", hook_addr as usize, target as usize);
-        }
-    });
+        });
 
-    unsafe { CREATE_DXGI_FACTORY = Some(mem::transmute(detour)) };
+        CREATE_DXGI_FACTORY = Some(mem::transmute(detour));
+    }
 }
 
 #[allow(non_snake_case)]
@@ -121,17 +117,17 @@ unsafe extern "system" fn hk_CreateDXGIFactory(
     riid: *const GUID, 
     factory: *mut *mut c_void
 ) -> HRESULT {
-    // This is checked way before the hook gets called, unwrap should be fine.
-    let hr = unsafe { (CREATE_DXGI_FACTORY.unwrap())(riid, factory) };
+    unsafe {
+        // This is checked way before the hook gets called, unwrap should be fine.
+        let hr = (CREATE_DXGI_FACTORY.unwrap())(riid, factory);
 
-    if hr.is_ok() && !factory.is_null() && !unsafe { (*factory).is_null() } {
-        let vtable = unsafe { *(*factory as *mut *mut *mut c_void) };
-        let entry = unsafe { vtable.add(10) };
+        if hr.is_ok() && !factory.is_null() && !(*factory).is_null() {
+            let vtable = *(*factory as *mut *mut *mut c_void);
+            let entry = vtable.add(10);
 
-        log::info!("Core", "Found CreateSwapChain at entry address 0x{:08X}.", entry as usize);
+            log::info!("Core", "Found CreateSwapChain at entry address 0x{:08X}.", entry as usize);
 
-        write_lock!("CreateSwapChain", entry as *const c_void, mem::size_of::<*mut c_void>(), {
-            unsafe {
+            write_lock!("CreateSwapChain", entry as *const c_void, mem::size_of::<*mut c_void>(), {
                 let old_addr = *entry;
                 let hook_addr = hk_CreateSwapChain as *mut c_void;
 
@@ -139,18 +135,18 @@ unsafe extern "system" fn hk_CreateDXGIFactory(
                 *entry = hook_addr;
 
                 log::info!("Core", "Wrote CreateSwapChain hook address 0x{:08X} to 0x{:08X}.", hook_addr as usize, old_addr as usize);
+            });
+        } else {
+            match hr.is_err() {
+                true => log::fatal!("Core", "CreateDXGIFactory failed with code 0x{:08X}.", hr.0),
+                false => log::fatal!("Core", "Factory recieved in CreateDXGIFactory was null.")
             }
-        });
-    } else {
-        match hr.is_err() {
-            true => log::fatal!("Core", "CreateDXGIFactory failed with code 0x{:08X}.", hr.0),
-            false => log::fatal!("Core", "Factory recieved in CreateDXGIFactory was null.")
+
+            display_error_box();
         }
 
-        display_error_box();
+        hr
     }
-
-    hr
 }
 
 #[allow(non_snake_case)]
@@ -160,17 +156,17 @@ unsafe extern "system" fn hk_CreateSwapChain(
     desc: *mut DXGI_SWAP_CHAIN_DESC,
     swapchain: *mut *mut IDXGISwapChain
 ) -> HRESULT {
-    // Ditto of above, unwrap should be fine.
-    let hr = unsafe { (CREATE_SWAP_CHAIN.unwrap())(factory, device, desc, swapchain) };
+    unsafe {
+        // Ditto of above, unwrap should be fine.
+        let hr = (CREATE_SWAP_CHAIN.unwrap())(factory, device, desc, swapchain);
 
-    if hr.is_ok() && !swapchain.is_null() && !unsafe { (*swapchain).is_null() } {
-        let vtable = unsafe { *(*swapchain as *mut *mut *mut c_void) };
-        let entry = unsafe { vtable.add(8) };
+        if hr.is_ok() && !swapchain.is_null() && !(*swapchain).is_null() {
+            let vtable = *(*swapchain as *mut *mut *mut c_void);
+            let entry = vtable.add(8);
 
-        log::info!("Core", "Found Present at entry address 0x{:08X}.", entry as usize);
+            log::info!("Core", "Found Present at entry address 0x{:08X}.", entry as usize);
 
-        write_lock!("Present", entry as *const c_void, mem::size_of::<*mut c_void>(), {
-            unsafe {
+            write_lock!("Present", entry as *const c_void, mem::size_of::<*mut c_void>(), {
                 let old_addr = *entry;
                 let hook_addr = hk_Present as *mut c_void;
 
@@ -178,18 +174,18 @@ unsafe extern "system" fn hk_CreateSwapChain(
                 *entry = hook_addr;
 
                 log::info!("Core", "Wrote Present hook address 0x{:08X} to 0x{:08X}.", hook_addr as usize, old_addr as usize);
+            });
+        } else {
+            match hr.is_err() {
+                true => log::fatal!("Core", "CreateSwapChain failed with code 0x{:08X}.", hr.0),
+                false => log::fatal!("Core", "Swapchain recieved in CreateSwapChain was null.")
             }
-        });
-    } else {
-        match hr.is_err() {
-            true => log::fatal!("Core", "CreateSwapChain failed with code 0x{:08X}.", hr.0),
-            false => log::fatal!("Core", "Swapchain recieved in CreateSwapChain was null.")
+
+            display_error_box();
         }
 
-        display_error_box();
+        hr
     }
-
-    hr
 }
 
 #[allow(non_snake_case)]
