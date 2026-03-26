@@ -2,6 +2,7 @@
 // We don't need anything else as the game just uses this function.
 
 use std::ffi::c_void;
+use std::cell::OnceCell;
 use shared::{Win32Unwrap, log};
 use windows::core::{s, GUID, HRESULT, PCSTR};
 use windows::Win32::{
@@ -10,16 +11,16 @@ use windows::Win32::{
     System::LibraryLoader::{GetProcAddress, LoadLibraryA}
 };
 
-type DInput8CreateFn = unsafe extern "system" fn(
-    HINSTANCE,
-    u32,
-    *const GUID,
-    *mut *mut c_void,
-    *mut c_void
-) -> HRESULT;
-
-static mut ORIGINAL_DLL: Option<HMODULE> = None;
-static mut DINPUT_CREATE: Option<DInput8CreateFn> = None;
+thread_local! {
+    static ORIGINAL_DLL: OnceCell<HMODULE> = OnceCell::new();
+    static DINPUT_CREATE: OnceCell<unsafe extern "system" fn(
+        HINSTANCE,
+        u32,
+        *const GUID,
+        *mut *mut c_void,
+        *mut c_void
+    ) -> HRESULT> = OnceCell::new();
+}
 
 pub fn load() {
     unsafe {
@@ -36,15 +37,18 @@ pub fn load() {
             log::fatal!("Loader", "Loading original DLL failed with code {}, aborting.", error.code());
         });
         
-        ORIGINAL_DLL = Some(module);
-        log::info!("Loader", "Loaded original DLL with handle 0x{:08X}.", module.0 as usize);
+        ORIGINAL_DLL.with(|dll| {
+            let _ = dll.set(module);
 
-        let method = GetProcAddress(ORIGINAL_DLL.unwrap(), s!("DirectInput8Create")).unwrap_or_die(|error| {
-            log::fatal!("Loader", "Retrieving original function failed with code {}, aborting.", error.code());
+            log::info!("Loader", "Loaded original DLL with handle 0x{:08X}.", module.0 as usize);
+
+            let method = GetProcAddress(*dll.get().unwrap(), s!("DirectInput8Create")).unwrap_or_die(|error| {
+                log::fatal!("Loader", "Retrieving original function failed with code {}, aborting.", error.code());
+            });
+
+            let _ = DINPUT_CREATE.with(|func| func.set(std::mem::transmute(method)));
+            log::info!("Loader", "Retrieved original function from address 0x{:08X}.", method as usize);
         });
-
-        DINPUT_CREATE = Some(std::mem::transmute(method));
-        log::info!("Loader", "Retrieved original function from address 0x{:08X}.", method as usize);
     }
 }
 
@@ -59,6 +63,6 @@ pub unsafe extern "system" fn DirectInput8Create(
 ) -> HRESULT {
     unsafe {
         // We crash if the function or module doesn't exist, should be fine.
-        (DINPUT_CREATE.unwrap())(hinst, dwVersion, riidltf, ppvOut, punkOuter)
+        DINPUT_CREATE.with(|func| (func.get().unwrap())(hinst, dwVersion, riidltf, ppvOut, punkOuter))
     }
 }

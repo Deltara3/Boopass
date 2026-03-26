@@ -3,6 +3,7 @@
 
 use std::{ptr, mem};
 use std::ffi::c_void;
+use std::cell::OnceCell;
 use shared::{Win32Unwrap, log, display_error_box};
 use windows::core::{s, GUID, HRESULT, IUnknown};
 use windows::Win32::{
@@ -11,28 +12,27 @@ use windows::Win32::{
     Graphics::Dxgi::{IDXGIFactory, IDXGISwapChain, DXGI_SWAP_CHAIN_DESC}
 };
 
-type CreateDXGIFactoryFn = unsafe extern "system" fn(
-    *const GUID,
-    *mut *mut c_void
-) -> HRESULT;
-
-type CreateSwapChainFn = unsafe extern "system" fn(
-    *mut IDXGIFactory,
-    *mut IUnknown,
-    *mut DXGI_SWAP_CHAIN_DESC,
-    *mut *mut IDXGISwapChain
-) -> HRESULT;
-
-type PresentFn = unsafe extern "system" fn(
-    *mut IDXGISwapChain,
-    u32,
-    u32
-) -> HRESULT;
-
 const PATCH_SIZE: usize = 5;
-static mut CREATE_DXGI_FACTORY: Option<CreateDXGIFactoryFn> = None;
-static mut CREATE_SWAP_CHAIN: Option<CreateSwapChainFn> = None;
-static mut PRESENT: Option<PresentFn> = None;
+
+thread_local! {
+    static CREATE_DXGI_FACTORY: OnceCell<unsafe extern "system" fn(
+        *const GUID,
+        *mut *mut c_void
+    ) -> HRESULT> = OnceCell::new();
+
+    static CREATE_SWAP_CHAIN: OnceCell<unsafe extern "system" fn(
+        *mut IDXGIFactory,
+        *mut IUnknown,
+        *mut DXGI_SWAP_CHAIN_DESC,
+        *mut *mut IDXGISwapChain
+    ) -> HRESULT> = OnceCell::new();
+
+    static PRESENT: OnceCell<unsafe extern "system" fn(
+        *mut IDXGISwapChain,
+        u32,
+        u32
+    ) -> HRESULT> = OnceCell::new();
+}
 
 static mut INITIALIZED: bool = false;
 static mut MENU_SHOWN: bool = true;
@@ -111,7 +111,7 @@ pub fn install() {
             log::info!("Core", "Wrote jump to 0x{:08X} at 0x{:08X}", hook_addr as usize, target as usize);
         });
 
-        CREATE_DXGI_FACTORY = Some(mem::transmute(detour));
+        let _ = CREATE_DXGI_FACTORY.with(|func| func.set(mem::transmute(detour)));
     }
 }
 
@@ -122,7 +122,7 @@ unsafe extern "system" fn hk_CreateDXGIFactory(
 ) -> HRESULT {
     unsafe {
         // This is checked way before the hook gets called, unwrap should be fine.
-        let hr = (CREATE_DXGI_FACTORY.unwrap())(riid, factory);
+        let hr = CREATE_DXGI_FACTORY.with(|func| (func.get().unwrap())(riid, factory));
 
         if hr.is_ok() && !factory.is_null() && !(*factory).is_null() {
             let vtable = *(*factory as *mut *mut *mut c_void);
@@ -134,7 +134,7 @@ unsafe extern "system" fn hk_CreateDXGIFactory(
                 let old_addr = *entry;
                 let hook_addr = hk_CreateSwapChain as *mut c_void;
 
-                CREATE_SWAP_CHAIN = Some(mem::transmute(old_addr));
+                let _ = CREATE_SWAP_CHAIN.with(|func| func.set(mem::transmute(old_addr)));
                 *entry = hook_addr;
 
                 log::info!("Core", "Wrote CreateSwapChain hook address 0x{:08X} to 0x{:08X}.", hook_addr as usize, old_addr as usize);
@@ -161,7 +161,7 @@ unsafe extern "system" fn hk_CreateSwapChain(
 ) -> HRESULT {
     unsafe {
         // Ditto of above, unwrap should be fine.
-        let hr = (CREATE_SWAP_CHAIN.unwrap())(factory, device, desc, swapchain);
+        let hr = CREATE_SWAP_CHAIN.with(|func| (func.get().unwrap())(factory, device, desc, swapchain));
 
         if hr.is_ok() && !swapchain.is_null() && !(*swapchain).is_null() {
             let vtable = *(*swapchain as *mut *mut *mut c_void);
@@ -173,7 +173,7 @@ unsafe extern "system" fn hk_CreateSwapChain(
                 let old_addr = *entry;
                 let hook_addr = hk_Present as *mut c_void;
 
-                PRESENT = Some(mem::transmute(old_addr));
+                let _ = PRESENT.with(|func| func.set(mem::transmute(old_addr)));
                 *entry = hook_addr;
 
                 log::info!("Core", "Wrote Present hook address 0x{:08X} to 0x{:08X}.", hook_addr as usize, old_addr as usize);
@@ -199,6 +199,6 @@ unsafe extern "system" fn hk_Present(
 ) -> HRESULT {
     unsafe {
         // Again ditto of above, should be fine.
-        (PRESENT.unwrap())(swapchain, sync, flags)
+        PRESENT.with(|func| (func.get().unwrap())(swapchain, sync, flags))
     }
 }
