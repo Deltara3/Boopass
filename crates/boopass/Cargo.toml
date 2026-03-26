@@ -17,7 +17,8 @@ windows = { version = "0.62", features = [
     "Win32_Graphics_Dxgi",
     "Win32_Graphics_Dxgi_Common",
     "Win32_Graphics_Direct3D10",
-    "Win32_UI_WindowsAndMessaging"
+    "Win32_UI_WindowsAndMessaging",
+    "Win32_UI_Input_KeyboardAndMouse"
 ]}
 
 [build-dependencies]

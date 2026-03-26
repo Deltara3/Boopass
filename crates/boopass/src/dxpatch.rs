@@ -5,6 +5,7 @@ use std::{ptr, mem};
 use std::ffi::c_void;
 use std::cell::OnceCell;
 use shared::{Win32Unwrap, log, cell, display_error_box, hookdef};
+use windows::Win32::UI::WindowsAndMessaging::GWLP_WNDPROC;
 use windows::core::{GUID, HRESULT, IUnknown, Interface, s};
 use windows::Win32::{
     Foundation::{HWND, WPARAM, LPARAM, LRESULT},
@@ -12,7 +13,8 @@ use windows::Win32::{
     System::Memory::{VirtualAlloc, VirtualProtect, PAGE_EXECUTE_READWRITE, MEM_COMMIT, MEM_RESERVE, PAGE_PROTECTION_FLAGS},
     Graphics::Dxgi::{IDXGIFactory, IDXGISwapChain, DXGI_SWAP_CHAIN_DESC},
     Graphics::Direct3D10::{ID3D10Device, ID3D10Texture2D, ID3D10RenderTargetView},
-    UI::WindowsAndMessaging::ShowCursor
+    UI::WindowsAndMessaging::{CallWindowProcA, SetWindowLongPtrA, ShowCursor, WM_KEYDOWN},
+    UI::Input::KeyboardAndMouse::VK_F12
 };
 
 const PATCH_SIZE: usize = 5;
@@ -23,7 +25,7 @@ thread_local! {
 }
 
 static mut INITIALIZED: bool = false;
-static mut MENU_SHOWN: bool = true;
+static mut MENU_SHOWN: bool = false;
 
 unsafe extern "C" {
     unsafe fn ImGui_WndProc(hwnd: HWND, msg: u32, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
@@ -102,7 +104,7 @@ pub fn install() {
             ptr::write_unaligned(patch.as_mut_ptr().add(1) as *mut u32, relative_to as u32);
 
             ptr::copy_nonoverlapping(patch.as_ptr(), target as *mut u8, PATCH_SIZE);
-            log::info!("Core", "Wrote jump to 0x{:08X} at 0x{:08X}", hook_addr as usize, target as usize);
+            log::info!("Core", "Wrote jump to 0x{:08X} at 0x{:08X}.", hook_addr as usize, target as usize);
         });
 
         cell::init!(CREATE_DXGI_FACTORY, mem::transmute(detour));
@@ -203,6 +205,11 @@ hookdef! {
                 let mut target_view: Option<ID3D10RenderTargetView> = None;
                 let desc = swap.GetDesc().unwrap();
 
+                let new_wndproc = hk_WndProc as *const c_void as i32;
+                let old_wndproc = SetWindowLongPtrA(desc.OutputWindow, GWLP_WNDPROC, new_wndproc);
+                cell::init!(WNDPROC, mem::transmute(old_wndproc as *const c_void));
+                log::info!("Core", "Updated window procedure from address 0x{:08X} to 0x{:08X}.", old_wndproc, new_wndproc);
+
                 cell::util!(DEVICE, device, {
                     log::info!("Core", "Found ID3D10Device at address 0x{:08X}.", device.as_raw() as usize);
 
@@ -248,7 +255,14 @@ hookdef! {
         lParam: LPARAM
     ) -> LRESULT {
         unsafe {
-            cell::call!(WNDPROC, hwnd, msg, wParam, lParam)
+            if msg == WM_KEYDOWN && wParam == WPARAM(VK_F12.0 as usize) {
+                MENU_SHOWN = !MENU_SHOWN;
+            }
+
+            ImGui_WndProc(hwnd, msg, wParam, lParam);
+            WNDPROC.with(|func| {
+                CallWindowProcA(Some(*func.get().unwrap()), hwnd, msg, wParam, lParam)
+            })
         }
     }
 }
