@@ -3,12 +3,11 @@
 
 use std::{ptr, mem};
 use std::ffi::c_void;
-use shared::{Win32Unwrap, log};
+use shared::{Win32Unwrap, log, display_error_box};
 use windows::core::{s, GUID, HRESULT, IUnknown};
 use windows::Win32::{
     System::LibraryLoader::{GetModuleHandleA, GetProcAddress},
     System::Memory::{VirtualAlloc, VirtualProtect, PAGE_EXECUTE_READWRITE, MEM_COMMIT, MEM_RESERVE, PAGE_PROTECTION_FLAGS},
-    System::Threading::ExitProcess,
     Graphics::Dxgi::{IDXGIFactory, IDXGISwapChain, DXGI_SWAP_CHAIN_DESC}
 };
 
@@ -24,9 +23,16 @@ type CreateSwapChainFn = unsafe extern "system" fn(
     *mut *mut IDXGISwapChain
 ) -> HRESULT;
 
+type PresentFn = unsafe extern "system" fn(
+    *mut IDXGISwapChain,
+    u32,
+    u32
+) -> HRESULT;
+
 const PATCH_SIZE: usize = 5;
 static mut CREATE_DXGI_FACTORY: Option<CreateDXGIFactoryFn> = None;
 static mut CREATE_SWAP_CHAIN: Option<CreateSwapChainFn> = None;
+static mut PRESENT: Option<PresentFn> = None;
 
 macro_rules! write_lock {
     ($section: literal, $addr: expr, $size: expr, $body: block) => {
@@ -76,7 +82,7 @@ pub fn install() {
 
     if detour.is_null() {
         log::fatal!("Core", "Failed to allocate memory for trampoline, aborting.");
-        unsafe { ExitProcess(1) };
+        display_error_box();
     }
 
     log::info!("Core", "Allocated memory for trampoline at address 0x{:08X}.", detour as usize);
@@ -132,14 +138,19 @@ unsafe extern "system" fn hk_CreateDXGIFactory(
                 CREATE_SWAP_CHAIN = Some(mem::transmute(old_addr));
                 *entry = hook_addr;
 
-                log::info!("Core", "Wrote hook address 0x{:08X} to 0x{:08X}", hook_addr as usize, old_addr as usize);
+                log::info!("Core", "Wrote CreateSwapChain hook address 0x{:08X} to 0x{:08X}.", hook_addr as usize, old_addr as usize);
             }
         });
     } else {
-        log::fatal!("Core", "CreateDXGIFactory failed with code 0x{:08X}.", hr.0);
+        match hr.is_err() {
+            true => log::fatal!("Core", "CreateDXGIFactory failed with code 0x{:08X}.", hr.0),
+            false => log::fatal!("Core", "Factory recieved in CreateDXGIFactory was null.")
+        }
+
+        display_error_box();
     }
 
-    return hr;
+    hr
 }
 
 #[allow(non_snake_case)]
@@ -149,8 +160,46 @@ unsafe extern "system" fn hk_CreateSwapChain(
     desc: *mut DXGI_SWAP_CHAIN_DESC,
     swapchain: *mut *mut IDXGISwapChain
 ) -> HRESULT {
+    // Ditto of above, unwrap should be fine.
+    let hr = unsafe { (CREATE_SWAP_CHAIN.unwrap())(factory, device, desc, swapchain) };
+
+    if hr.is_ok() && !swapchain.is_null() && !unsafe { (*swapchain).is_null() } {
+        let vtable = unsafe { *(*swapchain as *mut *mut *mut c_void) };
+        let entry = unsafe { vtable.add(8) };
+
+        log::info!("Core", "Found Present at entry address 0x{:08X}.", entry as usize);
+
+        write_lock!("Present", entry as *const c_void, mem::size_of::<*mut c_void>(), {
+            unsafe {
+                let old_addr = *entry;
+                let hook_addr = hk_Present as *mut c_void;
+
+                PRESENT = Some(mem::transmute(old_addr));
+                *entry = hook_addr;
+
+                log::info!("Core", "Wrote Present hook address 0x{:08X} to 0x{:08X}.", hook_addr as usize, old_addr as usize);
+            }
+        });
+    } else {
+        match hr.is_err() {
+            true => log::fatal!("Core", "CreateSwapChain failed with code 0x{:08X}.", hr.0),
+            false => log::fatal!("Core", "Swapchain recieved in CreateSwapChain was null.")
+        }
+
+        display_error_box();
+    }
+
+    hr
+}
+
+#[allow(non_snake_case)]
+unsafe extern "system" fn hk_Present(
+    swapchain: *mut IDXGISwapChain,
+    sync: u32,
+    flags: u32
+) -> HRESULT {
     unsafe {
-        // Ditto of above, unwrap should be fine.
-        (CREATE_SWAP_CHAIN.unwrap())(factory, device, desc, swapchain)
+        // Again ditto of above, should be fine.
+        (PRESENT.unwrap())(swapchain, sync, flags)
     }
 }

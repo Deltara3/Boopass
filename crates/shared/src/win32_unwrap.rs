@@ -15,17 +15,7 @@ impl<T> Win32Unwrap<T> for Option<T> {
             Some(value) => value,
             None => {
                 closure(HRESULT::from_thread().into());
-
-                unsafe {
-                    let _ = MessageBoxA(
-                        None,
-                        s!("A fatal error occurred. Please check the console for more information."),
-                        s!("Uh-oh!"),
-                        MB_OK | MB_ICONERROR | MB_TOPMOST
-                    );
-
-                    ExitProcess(1);
-                }
+                display_error_box()
             }
         }
     }
@@ -37,18 +27,21 @@ impl<T> Win32Unwrap<T> for Result<T> {
             Ok(value) => value,
             Err(error) => {
                 closure(error);
-
-                unsafe {
-                    let _ = MessageBoxA(
-                        None,
-                        s!("A fatal error occurred. Please check the console for more information."),
-                        s!("Uh-oh!"),
-                        MB_OK | MB_ICONERROR | MB_TOPMOST
-                    );
-                }
-
-                unsafe { ExitProcess(1) }
+                display_error_box()
             }
         }
+    }
+}
+
+pub fn display_error_box() -> ! {
+    unsafe {
+        let _ = MessageBoxA(
+            None,
+            s!("A fatal error occurred. Please check the console for more information before closing this."),
+            s!("Uh-oh!"),
+            MB_OK | MB_ICONERROR | MB_TOPMOST
+        );
+
+        ExitProcess(1);
     }
 }
