@@ -4,12 +4,15 @@
 use std::{ptr, mem};
 use std::ffi::c_void;
 use std::cell::OnceCell;
-use shared::{Win32Unwrap, log, display_error_box};
-use windows::core::{s, GUID, HRESULT, IUnknown};
+use shared::{Win32Unwrap, log, cell, display_error_box};
+use windows::core::{GUID, HRESULT, IUnknown, Interface, s};
 use windows::Win32::{
+    Foundation::{HWND, WPARAM, LPARAM, LRESULT},
     System::LibraryLoader::{GetModuleHandleA, GetProcAddress},
     System::Memory::{VirtualAlloc, VirtualProtect, PAGE_EXECUTE_READWRITE, MEM_COMMIT, MEM_RESERVE, PAGE_PROTECTION_FLAGS},
-    Graphics::Dxgi::{IDXGIFactory, IDXGISwapChain, DXGI_SWAP_CHAIN_DESC}
+    Graphics::Dxgi::{IDXGIFactory, IDXGISwapChain, DXGI_SWAP_CHAIN_DESC},
+    Graphics::Direct3D10::{ID3D10Device, ID3D10Texture2D, ID3D10RenderTargetView},
+    UI::WindowsAndMessaging::ShowCursor
 };
 
 const PATCH_SIZE: usize = 5;
@@ -32,10 +35,26 @@ thread_local! {
         u32,
         u32
     ) -> HRESULT> = OnceCell::new();
+
+    static WNDPROC: OnceCell<unsafe extern "system" fn(
+        HWND,
+        u32,
+        WPARAM,
+        LPARAM
+    ) -> LRESULT> = OnceCell::new();
+
+    static DEVICE: OnceCell<ID3D10Device> = OnceCell::new();
+    static RENDER_TARGET: OnceCell<ID3D10RenderTargetView> = OnceCell::new();
 }
 
 static mut INITIALIZED: bool = false;
 static mut MENU_SHOWN: bool = true;
+
+unsafe extern "C" {
+    unsafe fn ImGui_WndProc(hwnd: HWND, msg: u32, wParam: WPARAM, lParam: LPARAM) -> LRESULT;
+    unsafe fn ImGui_Init(hwnd: HWND, device: *mut c_void, target: *mut c_void);
+    unsafe fn ImGui_Draw();
+}
 
 macro_rules! write_lock {
     ($section: literal, $addr: expr, $size: expr, $body: block) => {
@@ -111,7 +130,7 @@ pub fn install() {
             log::info!("Core", "Wrote jump to 0x{:08X} at 0x{:08X}", hook_addr as usize, target as usize);
         });
 
-        let _ = CREATE_DXGI_FACTORY.with(|func| func.set(mem::transmute(detour)));
+        cell::init!(CREATE_DXGI_FACTORY, mem::transmute(detour));
     }
 }
 
@@ -122,7 +141,7 @@ unsafe extern "system" fn hk_CreateDXGIFactory(
 ) -> HRESULT {
     unsafe {
         // This is checked way before the hook gets called, unwrap should be fine.
-        let hr = CREATE_DXGI_FACTORY.with(|func| (func.get().unwrap())(riid, factory));
+        let hr = cell::call!(CREATE_DXGI_FACTORY, riid, factory);
 
         if hr.is_ok() && !factory.is_null() && !(*factory).is_null() {
             let vtable = *(*factory as *mut *mut *mut c_void);
@@ -134,7 +153,7 @@ unsafe extern "system" fn hk_CreateDXGIFactory(
                 let old_addr = *entry;
                 let hook_addr = hk_CreateSwapChain as *mut c_void;
 
-                let _ = CREATE_SWAP_CHAIN.with(|func| func.set(mem::transmute(old_addr)));
+                cell::init!(CREATE_SWAP_CHAIN, mem::transmute(old_addr));
                 *entry = hook_addr;
 
                 log::info!("Core", "Wrote CreateSwapChain hook address 0x{:08X} to 0x{:08X}.", hook_addr as usize, old_addr as usize);
@@ -161,7 +180,7 @@ unsafe extern "system" fn hk_CreateSwapChain(
 ) -> HRESULT {
     unsafe {
         // Ditto of above, unwrap should be fine.
-        let hr = CREATE_SWAP_CHAIN.with(|func| (func.get().unwrap())(factory, device, desc, swapchain));
+        let hr = cell::call!(CREATE_SWAP_CHAIN, factory, device, desc, swapchain);
 
         if hr.is_ok() && !swapchain.is_null() && !(*swapchain).is_null() {
             let vtable = *(*swapchain as *mut *mut *mut c_void);
@@ -173,7 +192,7 @@ unsafe extern "system" fn hk_CreateSwapChain(
                 let old_addr = *entry;
                 let hook_addr = hk_Present as *mut c_void;
 
-                let _ = PRESENT.with(|func| func.set(mem::transmute(old_addr)));
+                cell::init!(PRESENT, mem::transmute(old_addr));
                 *entry = hook_addr;
 
                 log::info!("Core", "Wrote Present hook address 0x{:08X} to 0x{:08X}.", hook_addr as usize, old_addr as usize);
@@ -198,7 +217,59 @@ unsafe extern "system" fn hk_Present(
     flags: u32
 ) -> HRESULT {
     unsafe {
-        // Again ditto of above, should be fine.
-        PRESENT.with(|func| (func.get().unwrap())(swapchain, sync, flags))
+        // Most of this shouldn't fail, I think.
+        if !INITIALIZED && !swapchain.is_null() {
+            let swapchain_addr = swapchain as *mut c_void;
+            let swap = IDXGISwapChain::from_raw_borrowed(&swapchain_addr).unwrap();
+
+            cell::init!(DEVICE, swap.GetDevice::<ID3D10Device>().unwrap());
+            let mut target_view: Option<ID3D10RenderTargetView> = None;
+            let desc = swap.GetDesc().unwrap();
+
+            cell::util!(DEVICE, device, {
+                log::info!("Core", "Found ID3D10Device at address 0x{:08X}.", device.as_raw() as usize);
+
+                let back_buffer = swap.GetBuffer::<ID3D10Texture2D>(0);
+                device.CreateRenderTargetView(back_buffer.as_ref().unwrap(), None, Some(&mut target_view)).unwrap_or_die(|error| {
+                    log::fatal!("Core", "Creating ID3D10RenderTargetView failed with code {}, aborting.", error.code());
+                });
+
+                cell::init!(RENDER_TARGET, target_view.unwrap());
+                cell::util!(RENDER_TARGET, render_target, {
+                    log::info!("Core", "Created ID3D10RenderTargetView at address 0x{:08X}.", render_target.as_raw() as usize);
+
+                    ImGui_Init(desc.OutputWindow, device.as_raw(), render_target.as_raw());
+                });
+            });
+
+            log::info!("Core", "Initialized ImGui successfully.");
+
+            INITIALIZED = true;
+        }
+
+        if !INITIALIZED {
+            return cell::call!(PRESENT, swapchain, sync, flags);
+        }
+
+        if MENU_SHOWN {
+            while ShowCursor(true) < 0 {}
+            ImGui_Draw();
+        } else {
+            while ShowCursor(false) >= 0 {}
+        }
+    
+        cell::call!(PRESENT, swapchain, sync, flags)
+    }
+}
+
+#[allow(non_snake_case)]
+unsafe extern "system" fn hk_WndProc(
+    hwnd: HWND,
+    msg: u32,
+    wParam: WPARAM,
+    lParam: LPARAM
+) -> LRESULT {
+    unsafe {
+        cell::call!(WNDPROC, hwnd, msg, wParam, lParam)
     }
 }

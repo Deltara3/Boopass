@@ -1,5 +1,5 @@
 fn main() {
-    println!("cargo::rerun-if-changed=src/imgui_bridge.cc");
+    println!("cargo::rerun-if-changed=src/ui.cc");
 
     cc::Build::new()
         .cpp(true)
@@ -8,7 +8,7 @@ fn main() {
             "src/imgui/backends"
         ])
         .files([
-            "src/imgui_bridge.cc",
+            "src/ui.cc",
             "src/imgui/imgui.cpp",
             "src/imgui/imgui_widgets.cpp",
             "src/imgui/imgui_tables.cpp",

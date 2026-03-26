@@ -1,6 +1,6 @@
 #[macro_export]
 macro_rules! info {
-    ($name: expr, $($arg: tt)*) => {
+    ($name: literal, $($arg: tt)*) => {
         println!(
             "[\x1B[1;92mINFO\x1B[0m] [\x1B[94m{}\x1B[0m] {}",
             $name,
@@ -11,7 +11,7 @@ macro_rules! info {
 
 #[macro_export]
 macro_rules! warn {
-    ($name: expr, $($arg: tt)*) => {
+    ($name: literal, $($arg: tt)*) => {
         println!(
             "[\x1B[1;93mWARN\x1B[0m] [\x1B[94m{}\x1B[0m] {}",
             $name,
@@ -22,7 +22,7 @@ macro_rules! warn {
 
 #[macro_export]
 macro_rules! fatal {
-    ($name: expr, $($arg: tt)*) => {
+    ($name: literal, $($arg: tt)*) => {
         println!(
             "[\x1B[1;91mFATAL\x1B[0m] [\x1B[94m{}\x1B[0m] {}",
             $name,

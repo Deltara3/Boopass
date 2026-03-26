@@ -1,9 +1,10 @@
 // Proxy implementation.
 // We don't need anything else as the game just uses this function.
 
+use std::mem;
 use std::ffi::c_void;
 use std::cell::OnceCell;
-use shared::{Win32Unwrap, log};
+use shared::{Win32Unwrap, log, cell};
 use windows::core::{s, GUID, HRESULT, PCSTR};
 use windows::Win32::{
     Foundation::{HINSTANCE, HMODULE, MAX_PATH},
@@ -46,7 +47,7 @@ pub fn load() {
                 log::fatal!("Loader", "Retrieving original function failed with code {}, aborting.", error.code());
             });
 
-            let _ = DINPUT_CREATE.with(|func| func.set(std::mem::transmute(method)));
+            cell::init!(DINPUT_CREATE, mem::transmute(method));
             log::info!("Loader", "Retrieved original function from address 0x{:08X}.", method as usize);
         });
     }
@@ -63,6 +64,6 @@ pub unsafe extern "system" fn DirectInput8Create(
 ) -> HRESULT {
     unsafe {
         // We crash if the function or module doesn't exist, should be fine.
-        DINPUT_CREATE.with(|func| (func.get().unwrap())(hinst, dwVersion, riidltf, ppvOut, punkOuter))
+        cell::call!(DINPUT_CREATE, hinst, dwVersion, riidltf, ppvOut, punkOuter)
     }
 }
