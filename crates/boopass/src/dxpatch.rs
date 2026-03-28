@@ -231,11 +231,7 @@ hookdef! {
                 INITIALIZED = true;
             }
 
-            if !INITIALIZED {
-                return cell::call!(PRESENT, swapchain, sync, flags);
-            }
-
-            if MENU_SHOWN {
+            if MENU_SHOWN && INITIALIZED {
                 while ShowCursor(true) < 0 {}
                 ImGui_Draw();
             } else {
