@@ -113,9 +113,9 @@ pub fn install() {
 
 hookdef! {
     CREATE_DXGI_FACTORY hk_CreateDXGIFactory(
-    riid: *const GUID, 
-    factory: *mut *mut c_void
-) -> HRESULT {
+        riid: *const GUID, 
+        factory: *mut *mut c_void
+    ) -> HRESULT {
         unsafe {
             // This is checked way before the hook gets called, unwrap should be fine.
             let hr = cell::call!(CREATE_DXGI_FACTORY, riid, factory);
